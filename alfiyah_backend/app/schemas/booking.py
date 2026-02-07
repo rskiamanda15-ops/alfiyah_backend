@@ -6,14 +6,19 @@ from pydantic import BaseModel
 
 class BookingCreate(BaseModel):
     service_type_id: int
+    tanggal_acara: datetime
+    jumlah_client: int
 
 
 class BookingRead(BaseModel):
     id: int
+    user_id: int
     service_type_id: int
     price_locked: Decimal
     status: str
-    created_at: datetime
+    tanggal_booking: datetime
+    tanggal_acara: datetime
+    jumlah_client: int
 
     model_config = {"from_attributes": True}
 

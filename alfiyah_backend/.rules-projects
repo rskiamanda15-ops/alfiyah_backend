@@ -1,0 +1,20 @@
+# Rules project (alfiyah_backend)
+
+Tujuan: berikan bantuan fokus pada backend Python (FastAPI + SQLAlchemy) dan hemat token.
+
+## Fokus konteks
+- Utamakan folder `alfiyah_backend/`.
+- Abaikan aplikasi mobile kecuali diminta eksplisit.
+
+## Ringkas analisis
+- Susun jawaban singkat terlebih dahulu (2–4 poin), detail hanya jika diminta.
+- Saat menyebut file, gunakan path lengkap dan sebutkan fungsi/kelas utama saja.
+
+## Perubahan kode
+- Jelaskan perubahan secara singkat sebelum eksekusi.
+- Modifikasi hanya file yang relevan; hindari format ulang besar-besaran.
+- Jangan membuat file `.md` kecuali diminta user.
+
+## Gaya komunikasi
+- Bahasa Indonesia yang jelas dan singkat.
+- Akhiri setiap balasan dengan pertanyaan tindak lanjut.

@@ -29,6 +29,8 @@ def create_booking(
         service_type_id=service_type.id,
         price_locked=service_type.price,
         status="pending",
+        tanggal_acara=payload.tanggal_acara,
+        jumlah_client=payload.jumlah_client,
     )
     db.add(booking)
     db.commit()

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-from app.routers import auth, services, bookings
+from app.routers import auth, services, bookings, segments
 
 app = FastAPI(title="Alfiyah Booking API", version="1.0.0")
 
@@ -19,6 +19,7 @@ Base.metadata.create_all(bind=engine)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(services.router, prefix="/services", tags=["services"])
 app.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
+app.include_router(segments.router, prefix="/segments", tags=["segments"])
 
 
 @app.get("/health")
