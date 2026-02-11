@@ -1,7 +1,10 @@
 from decimal import Decimal
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel
+
+from app.schemas.user import UserRead
 
 
 class BookingCreate(BaseModel):
@@ -19,6 +22,12 @@ class BookingRead(BaseModel):
     tanggal_booking: datetime
     tanggal_acara: datetime
     jumlah_client: int
+    priority_score: int
+    priority_segment: str
+    urgency_level: Optional[str] = None
+    monetary_level: Optional[str] = None
+    updated_priority_at: Optional[datetime] = None
+    user: UserRead # Nested user data
 
     model_config = {"from_attributes": True}
 

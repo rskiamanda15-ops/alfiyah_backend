@@ -20,3 +20,9 @@ class Transaction(Base):
 
     user = relationship("User", back_populates="transactions")
     service_type = relationship("ServiceType", back_populates="transactions")
+
+    priority_score = Column(Integer, default=0, nullable=False)
+    priority_segment = Column(String(50), default="low", nullable=False)
+    urgency_level = Column(String(50))
+    monetary_level = Column(String(50))
+    updated_priority_at = Column(DateTime)
