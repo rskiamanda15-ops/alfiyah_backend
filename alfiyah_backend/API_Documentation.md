@@ -491,7 +491,8 @@ Retrieves customer segmentation data.
       "recency": 0,
       "frequency": 0,
       "monetary": 0.00,
-      "cluster": 0
+      "cluster": 0,
+      "customer_segment": "Loyal"
     }
   ]
   ```
@@ -502,6 +503,7 @@ Retrieves customer segmentation data.
   - `frequency` (integer): Total number of bookings.
   - `monetary` (decimal): Total money spent.
   - `cluster` (integer): The assigned cluster ID.
+  - `customer_segment` (string): The derived customer segment (e.g., "Loyal", "Aktif", "Potensial", "Pasif").
 - **Error Responses:**
   - `400 Bad Request`: If segmentation fails (e.g., not enough data).
   - `401 Unauthorized`: If no token or an invalid token is provided.

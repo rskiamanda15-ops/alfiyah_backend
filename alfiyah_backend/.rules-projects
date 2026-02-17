@@ -1,20 +1,123 @@
-# Rules project (alfiyah_backend)
+# STRICT RULES — alfiyah_backend
 
-Tujuan: berikan bantuan fokus pada backend Python (FastAPI + SQLAlchemy) dan hemat token.
+Tujuan: AI hanya menghasilkan solusi backend FastAPI + SQLAlchemy yang presisi, minimal, dan hemat token.
 
-## Fokus konteks
-- Utamakan folder `alfiyah_backend/`.
-- Abaikan aplikasi mobile kecuali diminta eksplisit.
+---
 
-## Ringkas analisis
-- Susun jawaban singkat terlebih dahulu (2–4 poin), detail hanya jika diminta.
-- Saat menyebut file, gunakan path lengkap dan sebutkan fungsi/kelas utama saja.
+## 1. Scope Wajib
 
-## Perubahan kode
-- Jelaskan perubahan secara singkat sebelum eksekusi.
-- Modifikasi hanya file yang relevan; hindari format ulang besar-besaran.
-- Jangan membuat file `.md` kecuali diminta user.
+- Fokus hanya pada folder: `alfiyah_backend/`
+- Abaikan mobile/frontend kecuali diminta eksplisit.
+- Jangan membuat asumsi di luar prompt.
+- Jangan menambahkan fitur tambahan.
+- Jangan melakukan improvisasi arsitektur.
 
-## Gaya komunikasi
-- Bahasa Indonesia yang jelas dan singkat.
-- Akhiri setiap balasan dengan pertanyaan tindak lanjut.
+---
+
+## 2. Eksekusi Berdasarkan Prompt
+
+- Analisis intent utama user.
+- Hasilkan kode yang langsung menyelesaikan masalah.
+- Jangan memberi template umum jika tidak diminta.
+- Jangan menjelaskan teori kecuali diminta.
+- Jika ambigu, pilih solusi paling minimal.
+
+---
+
+## 3. Aturan Output Jawaban
+
+Struktur wajib:
+1. Ringkasan singkat (maksimal 4 poin).
+2. File yang diubah (path lengkap).
+3. Penjelasan perubahan singkat.
+4. Kode (hanya bagian relevan).
+
+Dilarang:
+- Mengulang isi prompt.
+- Memberi penjelasan panjang.
+- Memberi teori dasar FastAPI/SQLAlchemy.
+- Memberi contoh dummy berlebihan.
+
+---
+
+## 4. Aturan Kode
+
+Kode harus:
+- Clean
+- Minimal
+- Production-ready
+- Tidak verbose
+
+Dilarang:
+- Komentar berlebihan
+- Refactor besar tanpa diminta
+- Mengubah naming convention
+- Menampilkan seluruh file jika hanya sebagian berubah
+- Menambahkan logging/debug tidak diminta
+
+Komentar dalam kode:
+- Maksimal seperlunya
+- Tidak menjelaskan hal yang obvious
+
+---
+
+## 5. File & Struktur
+
+- Gunakan path lengkap saat menyebut file:
+  `alfiyah_backend/app/api/booking.py`
+- Sebutkan hanya:
+  - fungsi yang diubah
+  - class yang diubah
+- Jangan buat file baru jika tidak diminta.
+- Jika harus membuat file, harus sesuai struktur existing project.
+
+---
+
+## 6. Database Rules (SQLAlchemy)
+
+- Ikuti pola project yang sudah ada.
+- Jangan ubah session management.
+- Jangan buat relasi kompleks jika tidak diminta.
+- Query harus efisien dan minimal.
+
+---
+
+## 7. Validasi & Error Handling
+
+- Gunakan `HTTPException` seperlunya.
+- Gunakan status code yang tepat.
+- Jangan overengineering validation.
+
+---
+
+## 8. Token Efficiency Mode
+
+- Jawaban ringkas.
+- Tidak bertele-tele.
+- Tidak mengulang konteks.
+- Tidak memberi alternatif berlebihan.
+- Tidak membuat file `.md` kecuali diminta user.
+
+---
+
+## 9. Konsistensi Arsitektur
+
+Ikuti pola project yang ada:
+- router
+- schema
+- model
+- service (jika ada)
+
+Dilarang:
+- Mencampur business logic ke router jika ada service layer.
+- Membuat layer baru tanpa diminta.
+
+---
+
+## 10. Gaya Komunikasi
+
+- Bahasa Indonesia.
+- Singkat.
+- Tegas.
+- Fokus solusi.
+- Akhiri dengan 1 pertanyaan tindak lanjut.

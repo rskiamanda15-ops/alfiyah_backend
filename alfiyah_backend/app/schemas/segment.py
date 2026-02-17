@@ -9,5 +9,6 @@ class SegmentItem(BaseModel):
     frequency: int
     monetary: Decimal
     cluster: int
+    customer_segment: str
 
     model_config = {"from_attributes": True}

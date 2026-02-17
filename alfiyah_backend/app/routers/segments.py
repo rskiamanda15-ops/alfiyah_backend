@@ -24,6 +24,7 @@ def list_segments(db: Session = Depends(get_db), _admin=Depends(get_current_admi
             frequency=point.frequency,
             monetary=point.monetary,
             cluster=label,
+            customer_segment=segment_label,
         )
-        for point, label in results
+        for point, label, segment_label in results
     ]

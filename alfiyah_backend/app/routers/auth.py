@@ -21,6 +21,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         name=user_in.name,
         email=user_in.email,
         address=user_in.address,
+        phone_number=user_in.phone_number, # Tambahkan baris ini
         hashed_password=get_password_hash(user_in.password),
         role="customer",
     )
