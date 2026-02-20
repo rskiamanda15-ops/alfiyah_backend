@@ -231,6 +231,58 @@ Creates a new service package.
   - `401 Unauthorized`: If no token or an invalid token is provided.
   - `403 Forbidden`: If the authenticated user is not an admin.
 
+### `PATCH /services/packages/{package_id}`
+
+Updates an existing service package.
+
+- **Description:** Allows an administrator to update the details of an existing package.
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Path Parameters:**
+  - `package_id` (integer, required): The ID of the package to update.
+- **Request Body (application/json):**
+  ```json
+  {
+    "name": "string | null",
+    "description": "string | null"
+  }
+  ```
+  **Schema: `PackageUpdate`**
+  - `name` (string | null, max_length=120, optional)
+  - `description` (string | null, optional)
+- **Response (application/json):**
+  ```json
+  {
+    "id": 0,
+    "name": "string",
+    "description": "string | null",
+    "service_types": []
+  }
+  ```
+  **Schema: `PackageRead`** (returns the updated package)
+- **Error Responses:**
+  - `404 Not Found`: If the `package_id` does not exist.
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
+
+### `DELETE /services/packages/{package_id}`
+
+Deletes a service package.
+
+- **Description:** Allows an administrator to delete an existing package and all its associated service types (due to cascading delete configuration).
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Path Parameters:**
+  - `package_id` (integer, required): The ID of the package to delete.
+- **Response (204 No Content):**
+  ```json
+  {
+    "message": "Package deleted successfully"
+  }
+  ```
+- **Error Responses:**
+  - `404 Not Found`: If the `package_id` does not exist.
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
+
 ### `POST /services/types`
 
 Creates a new service type within an existing package.
@@ -270,6 +322,71 @@ Creates a new service type within an existing package.
   **Schema: `PackageRead`** (returns the updated package including the new service type)
 - **Error Responses:**
   - `404 Not Found`: If the `package_id` does not correspond to an existing package.
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
+
+### `PATCH /services/types/{service_type_id}`
+
+Updates an existing service type.
+
+- **Description:** Allows an administrator to update the details of an existing service type.
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Path Parameters:**
+  - `service_type_id` (integer, required): The ID of the service type to update.
+- **Request Body (application/json):**
+  ```json
+  {
+    "name": "string | null",
+    "description": "string | null",
+    "price": 0.00 | null
+  }
+  ```
+  **Schema: `ServiceTypeUpdate`**
+  - `name` (string | null, max_length=120, optional)
+  - `description` (string | null, optional)
+  - `price` (decimal | null, optional)
+- **Response (application/json):**
+  ```json
+  {
+    "id": 0,
+    "name": "string",
+    "description": "string | null",
+    "service_types": [
+      {
+        "id": 0,
+        "name": "string",
+        "description": "string | null",
+        "price": 0.00
+      }
+    ]
+  }
+  ```
+  **Schema: `PackageRead`** (returns the parent package with the updated service type)
+- **Error Responses:**
+  - `404 Not Found`: If the `service_type_id` does not exist.
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
+
+### `DELETE /services/types/{service_type_id}`
+
+Deletes a service type.
+
+- **Description:** Allows an administrator to delete an existing service type.
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Path Parameters:**
+  - `service_type_id` (integer, required): The ID of the service type to delete.
+- **Response (application/json):**
+  ```json
+  {
+    "id": 0,
+    "name": "string",
+    "description": "string | null",
+    "service_types": []
+  }
+  ```
+  **Schema: `PackageRead`** (returns the parent package with the service type removed)
+- **Error Responses:**
+  - `404 Not Found`: If the `service_type_id` or its parent package does not exist.
   - `401 Unauthorized`: If no token or an invalid token is provided.
   - `403 Forbidden`: If the authenticated user is not an admin.
 
@@ -379,6 +496,28 @@ Creates a new booking.
   **Schema: `BookingRead`** (List of objects, as defined above)
 - **Error Responses:**
   - `401 Unauthorized`: If no token or an invalid token is provided.
+
+### `GET /bookings/stream` (Admin Only)
+
+Streams booking updates in real-time using Server-Sent Events (SSE).
+
+- **Description:** Provides a real-time stream of booking events, such as creation and status updates. This is useful for building a live dashboard for administrators. Requires administrator privileges.
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Response (`text/event-stream`):**
+  This endpoint returns a stream of events. It does not return a single JSON response. The client should use an `EventSource` to connect. Each event in the stream has the following structure:
+  ```
+  data: {"type": "event_type", "data": "json_string_of_booking_read_schema"}
+  ```
+  - **`type`**: The type of event (e.g., `booking_created`, `booking_updated`).
+  - **`data`**: A JSON string representation of the full `BookingRead` object.
+
+  **Example Event:**
+  ```text
+  data: {"type": "booking_updated", "data": "{\"id\":1,\"user_id\":1,\"service_type_id\":2,\"price_locked\":\"1500000.00\",\"status\":\"dp\",\"tanggal_booking\":\"2026-02-11T12:00:00\",\"tanggal_acara\":\"2026-02-20T10:00:00\",\"jumlah_client\":2,\"priority_score\":60,\"priority_segment\":\"medium\",\"urgency_level\":\"soon\",\"monetary_level\":\"premium\",\"updated_priority_at\":\"2026-02-11T12:05:00\",\"user\":{\"id\":1,\"name\":\"Admin User\",\"email\":\"admin@example.com\",\"address\":\"123 Admin St\",\"phone_number\":\"123456789\",\"role\":\"admin\"}}"}
+  ```
+- **Error Responses:**
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
 
 ### `GET /bookings/`
 
@@ -506,5 +645,27 @@ Retrieves customer segmentation data.
   - `customer_segment` (string): The derived customer segment (e.g., "Loyal", "Aktif", "Potensial", "Pasif").
 - **Error Responses:**
   - `400 Bad Request`: If segmentation fails (e.g., not enough data).
+  - `401 Unauthorized`: If no token or an invalid token is provided.
+  - `403 Forbidden`: If the authenticated user is not an admin.
+
+### `GET /segments/stream` (Admin Only)
+
+Streams customer segmentation updates in real-time using Server-Sent Events (SSE).
+
+- **Description:** Provides a real-time stream of customer segmentation data. When booking data changes (creation or status update), the segmentation is recalculated and broadcast through this stream. This is useful for building a live dashboard for administrators. Requires administrator privileges.
+- **Authentication:** Admin token required (`Bearer <access_token>`).
+- **Response (`text/event-stream`):**
+  This endpoint returns a stream of events. It does not return a single JSON response. The client should use an `EventSource` to connect. Each event in the stream has the following structure:
+  ```
+  data: {"type": "event_type", "data": "json_string_of_list_of_segment_item_schema"}
+  ```
+  - **`type`**: The type of event (e.g., `segment_updated`).
+  - **`data`**: A JSON string representation of a list of `SegmentItem` objects.
+
+  **Example Event:**
+  ```text
+  data: {"type": "segment_updated", "data": "[{\"user_id\":1,\"name\":\"John Doe\",\"recency\":5,\"frequency\":3,\"monetary\":\"1500000.00\",\"cluster\":0,\"customer_segment\":\"Loyal\"},{\"user_id\":2,\"name\":\"Jane Smith\",\"recency\":30,\"frequency\":1,\"monetary\":\"500000.00\",\"cluster\":3,\"customer_segment\":\"Pasif\"}]"}
+  ```
+- **Error Responses:**
   - `401 Unauthorized`: If no token or an invalid token is provided.
   - `403 Forbidden`: If the authenticated user is not an admin.

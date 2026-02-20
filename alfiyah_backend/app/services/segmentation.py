@@ -6,11 +6,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Iterable
 
+import anyio # New import
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.schemas.segment import SegmentItem # New import
+from app.utils.broadcast import broadcaster # New import
 
 
 @dataclass(frozen=True)
@@ -171,3 +174,25 @@ def segment_customers(db: Session, k: int) -> list[tuple[RfmPoint, int, str]]:
         results_with_segments.append((point, label, segment_label))
 
     return results_with_segments
+
+
+def _broadcast_segments(db: Session):
+    """Helper to recalculate and broadcast segments."""
+    try:
+        segments_raw = segment_customers(db, k=4)
+        segments_data = [
+            SegmentItem(
+                user_id=point.user_id,
+                name=point.name,
+                recency=point.recency,
+                frequency=point.frequency,
+                monetary=point.monetary,
+                cluster=label,
+                customer_segment=segment_label,
+            ).model_dump(mode="json")
+            for point, label, segment_label in segments_raw
+        ]
+        anyio.from_thread.run(broadcaster.broadcast, {"type": "segment_updated", "data": segments_data})
+    except Exception:
+        # Silently fail if broadcasting segments doesn't work.
+        pass

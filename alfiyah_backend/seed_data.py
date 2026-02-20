@@ -12,6 +12,7 @@ from app.core.security import get_password_hash # Import here for password hashi
 from app.utils.priority import calculate_priority # Import calculate_priority here for use in seeding transactions
 
 
+#logika user ke database
 def _seed_users_from_csv(db: Session):
     print("Seeding users from datasets.csv...")
     try:
@@ -59,6 +60,7 @@ def _seed_users_from_csv(db: Session):
     print("Users from datasets.csv seeded successfully.")
 
 
+#logika data transaksi ke database
 def _seed_transactions_from_csv(db: Session):
     print("Seeding transactions from datasets.csv...")
     try:

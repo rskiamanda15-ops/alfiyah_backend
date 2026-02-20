@@ -312,6 +312,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         name=user_in.name,
         email=user_in.email,
         address=user_in.address,
+        phone_number=user_in.phone_number, # Tambahkan baris ini
         hashed_password=get_password_hash(user_in.password),
         role="customer",
     )
@@ -427,8 +428,9 @@ def list_segments(db: Session = Depends(get_db), _admin=Depends(get_current_admi
             frequency=point.frequency,
             monetary=point.monetary,
             cluster=label,
+            customer_segment=segment_label,
         )
-        for point, label in results
+        for point, label, segment_label in results
     ]
 
 ```
@@ -559,6 +561,7 @@ class SegmentItem(BaseModel):
     frequency: int
     monetary: Decimal
     cluster: int
+    customer_segment: str
 
     model_config = {"from_attributes": True}
 
@@ -848,13 +851,64 @@ def build_rfm_points(db: Session) -> list[RfmPoint]:
     return points
 
 
-def segment_customers(db: Session, k: int) -> list[tuple[RfmPoint, int]]:
+def segment_customers(db: Session, k: int) -> list[tuple[RfmPoint, int, str]]:
     points = build_rfm_points(db)
     if not points:
         return []
     vectors, _, _ = _normalize(points)
     labels = _kmeans(vectors, k=k)
-    return list(zip(points, labels))
+
+    # Group points by cluster
+    clusters_data = {i: [] for i in range(k)}
+    for point, label in zip(points, labels):
+        clusters_data[label].append(point)
+
+    # Calculate average RFM for each cluster
+    cluster_metrics = {}
+    for cluster_id, cluster_points in clusters_data.items():
+        if cluster_points:
+            # Ensure Decimal values are converted to float for sum/average if needed, or handle Decimal arithmetic
+            avg_recency = sum(p.recency for p in cluster_points) / len(cluster_points)
+            avg_frequency = sum(p.frequency for p in cluster_points) / len(cluster_points)
+            # Convert Decimal to float for weighted average, or ensure consistent type for comparison
+            avg_monetary = float(sum(p.monetary for p in cluster_points)) / len(cluster_points)
+            
+            cluster_metrics[cluster_id] = {
+                "avg_recency": avg_recency,
+                "avg_frequency": avg_frequency,
+                "avg_monetary": avg_monetary,
+                "num_points": len(cluster_points)
+            }
+        else:
+            cluster_metrics[cluster_id] = {
+                "avg_recency": 0, "avg_frequency": 0, "avg_monetary": 0, "num_points": 0
+            }
+
+    # Determine mapping from cluster ID to segment label
+    # Sort clusters based on a "value" metric (e.g., higher frequency and monetary, lower recency)
+    # This key defines the "best" cluster. We'll give higher weight to monetary and frequency.
+    ranked_clusters = sorted(
+        cluster_metrics.items(),
+        key=lambda item: (item[1]["avg_frequency"] * item[1]["avg_monetary"]) - (item[1]["avg_recency"] * 10), # Heuristic score
+        reverse=True # Highest score first
+    )
+
+    # Assign segment names based on rank (assuming k=4, from best to worst)
+    cluster_segment_map = {}
+    segment_names = ["Loyal", "Aktif", "Potensial", "Pasif"] # Ordered from best to worst
+    for i, (cluster_id, _) in enumerate(ranked_clusters):
+        if i < len(segment_names):
+            cluster_segment_map[cluster_id] = segment_names[i]
+        else:
+            cluster_segment_map[cluster_id] = f"Cluster {cluster_id}"
+
+
+    results_with_segments = []
+    for point, label in zip(points, labels):
+        segment_label = cluster_segment_map.get(label, "Unknown")
+        results_with_segments.append((point, label, segment_label))
+
+    return results_with_segments
 
 ```
 ###  Path: `/app/services/user_service.py`

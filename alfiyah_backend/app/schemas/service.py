@@ -9,11 +9,22 @@ class PackageCreate(BaseModel):
     description: Optional[str] = None
 
 
+class PackageUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=120)
+    description: Optional[str] = None
+
+
 class ServiceTypeCreate(BaseModel):
     package_id: int
     name: str = Field(..., max_length=120)
     description: Optional[str] = None
     price: Decimal
+
+
+class ServiceTypeUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=120)
+    description: Optional[str] = None
+    price: Optional[Decimal] = None
 
 
 class ServiceTypeRead(BaseModel):

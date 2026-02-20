@@ -1,14 +1,36 @@
 from typing import Optional
+import asyncio
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_admin, get_current_user
 from app.schemas.booking import BookingCreate, BookingRead, BookingStatusUpdate
 from app.services import booking_service
+from app.utils.broadcast import broadcaster
 
 router = APIRouter()
+
+
+@router.get("/stream")
+async def stream_bookings(_admin=Depends(get_current_admin)):
+    """Defines an SSE endpoint that streams booking updates to clients."""
+
+    async def event_generator():
+        queue = await broadcaster.subscribe()
+        try:
+            while True:
+                message = await queue.get()
+                # SSE format: data: <json_string>\n\n
+                yield f"data: {json.dumps(message)}\n\n"
+        except asyncio.CancelledError:
+            # This exception is raised when the client disconnects.
+            await broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/", response_model=BookingRead, status_code=status.HTTP_201_CREATED)
