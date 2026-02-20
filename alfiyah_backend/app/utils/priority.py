@@ -31,7 +31,7 @@ def train_and_save_model():
     """Trains the K-means model and saves it along with the preprocessor."""
     print("Training K-means model for booking priority...")
     synthetic_data = _generate_synthetic_data()
-    df = pd.DataFrame(synthetic_data) # Assuming pandas is available or mock it
+    df = pd.DataFrame(synthetic_data)
 
     # Define preprocessing steps
     numeric_features = ['diff_days', 'price_locked', 'jumlah_client']
@@ -41,7 +41,9 @@ def train_and_save_model():
         transformers=[
             ('num', StandardScaler(), numeric_features),
             ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-        ])
+        ],
+        remainder='passthrough' # Keep other columns if any, though not strictly needed here
+    )
 
     # Create a pipeline with preprocessor and KMeans
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
@@ -49,90 +51,137 @@ def train_and_save_model():
 
     pipeline.fit(df)
 
-    # Determine mapping from cluster ID to priority segment
-    # This is a critical step: we need to analyze the clusters to assign meaning.
-    # For now, we'll create a dummy mapping based on centroids or some heuristic.
-    # In a real scenario, this would involve more rigorous analysis.
-    # We'll generate a dummy booking and predict its cluster to get a sense.
+    kmeans_model = pipeline.named_steps['kmeans']
+    preprocessor_model = pipeline.named_steps['preprocessor']
+    
+    # Get centroids in the transformed space
+    centroids_transformed = kmeans_model.cluster_centers_
 
-    # Example of how to determine mapping (simplified for this context)
-    # In reality, you'd inspect centroids and what kind of data they represent.
-    # For a deterministic outcome, we need a fixed way to map.
-    # Let's assume cluster 0 = low, 1 = medium, 2 = high
-    # This mapping must be manually derived or trained.
+    # Get the StandardScaler and OneHotEncoder components
+    scaler = preprocessor_model.named_transformers_['num']
+    onehot_encoder = preprocessor_model.named_transformers_['cat']
 
-    # Simulate a few data points to see cluster assignment
-    sample_bookings = [
-        {'diff_days': 30, 'status': 'pending', 'price_locked': 500000, 'jumlah_client': 1}, # Low
-        {'diff_days': 7, 'status': 'pending', 'price_locked': 900000, 'jumlah_client': 2},    # Medium
-        {'diff_days': 1, 'status': 'pending', 'price_locked': 1000000, 'jumlah_client': 3},   # High
-    ]
-    sample_df = pd.DataFrame(sample_bookings)
-    sample_clusters = pipeline.predict(sample_df)
+    # Determine the number of features created by the one-hot encoder
+    num_onehot_features = len(onehot_encoder.get_feature_names_out(categorical_features))
+    num_numeric_features = len(numeric_features)
 
-    # This mapping will need to be carefully constructed.
-    # For this example, let's assume a fixed mapping for simplicity based on expected cluster order.
-    # Realistically, you'd check which cluster centroid has highest avg score/monetary/etc.
+    # To score clusters, we'll evaluate their centroids
+    # Extract only the numeric parts of the centroids and inverse transform them
+    numeric_centroids_transformed = centroids_transformed[:, :num_numeric_features]
+    numeric_centroids_original = scaler.inverse_transform(numeric_centroids_transformed)
+
+    # Calculate a composite score for each cluster based on its original-scale numeric features
+    # Lower diff_days is better (higher urgency), higher price_locked and jumlah_client are better
+    cluster_scores = []
+    for i, centroid_numeric in enumerate(numeric_centroids_original):
+        diff_days, price_locked, jumlah_client = centroid_numeric
+        # Adjust weights as needed
+        score = (price_locked * 0.5) - (diff_days * 1000) + (jumlah_client * 50000) 
+        cluster_scores.append({'cluster_id': i, 'score': score})
+
+    # Sort clusters by their score in descending order
+    cluster_scores.sort(key=lambda x: x['score'], reverse=True)
+
+    # Assign priority segments based on sorted scores
     global cluster_to_priority_map
-    cluster_to_priority_map = {
-        sample_clusters[0]: {"priority_score": 20, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"},
-        sample_clusters[1]: {"priority_score": 60, "priority_segment": "medium", "urgency_level": "soon", "monetary_level": "premium"},
-        sample_clusters[2]: {"priority_score": 90, "priority_segment": "high", "urgency_level": "urgent", "monetary_level": "vip"},
-    }
-    # Ensure all 3 clusters are mapped, even if samples don't hit all.
-    # This part is highly dependent on the KMeans output and requires manual verification or more robust logic.
-    # For robustness, we could sort centroids by some aggregate metric (e.g., mean price_locked)
-    # and then assign segments.
+    cluster_to_priority_map = {}
+    
+    # Assuming n_clusters=3 for 'high', 'medium', 'low'
+    priority_labels = ['high', 'medium', 'low']
+    urgency_labels = ['urgent', 'soon', 'upcoming']
+    monetary_labels = ['vip', 'premium', 'regular']
+    priority_scores = [90, 60, 20]
 
-    # Save the pipeline and mapping
-    with open(MODEL_PATH, 'wb') as f:
-        pickle.dump({'pipeline': pipeline, 'mapping': cluster_to_priority_map}, f)
-    print("K-means model and preprocessor trained and saved.")
+    for i, cluster_info in enumerate(cluster_scores):
+        cluster_id = cluster_info['cluster_id']
+        if i < len(priority_labels):
+            cluster_to_priority_map[cluster_id] = {
+                "priority_score": priority_scores[i],
+                "priority_segment": priority_labels[i],
+                "urgency_level": urgency_labels[i],
+                "monetary_level": monetary_labels[i],
+            }
+        else:
+            # Fallback for more clusters than defined labels
+            cluster_to_priority_map[cluster_id] = {
+                "priority_score": 0, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"
+            }
+    
+    # Save the pipeline and cluster_to_priority_map
+    try:
+        with open(MODEL_PATH, 'wb') as f:
+            pickle.dump((pipeline, cluster_to_priority_map), f)
+        print(f"K-means model and cluster map saved to {MODEL_PATH}")
+    except Exception as e:
+        print(f"Error saving model to disk: {e}")
 
-def load_model():
-    """Loads the K-means model and preprocessor."""
+
+def _load_model():
+    """Loads the trained model and preprocessor from MODEL_PATH."""
     global loaded_model, loaded_preprocessor, cluster_to_priority_map
     if os.path.exists(MODEL_PATH):
-        with open(MODEL_PATH, 'rb') as f:
-            data = pickle.load(f)
-            loaded_model = data['pipeline'].named_steps['kmeans']
-            loaded_preprocessor = data['pipeline'].named_steps['preprocessor']
-            cluster_to_priority_map = data['mapping']
-        print("K-means model and preprocessor loaded.")
-    else:
-        print("K-means model not found. Please run seed_data.py to train it.")
+        try:
+            with open(MODEL_PATH, 'rb') as f:
+                pipeline_loaded, cluster_map_loaded = pickle.load(f)
+            loaded_model = pipeline_loaded.named_steps['kmeans']
+            loaded_preprocessor = pipeline_loaded.named_steps['preprocessor']
+            cluster_to_priority_map = cluster_map_loaded
+            print("K-means model and cluster map loaded from disk.")
+            return True
+        except Exception as e:
+            print(f"Error loading model from disk: {e}")
+            return False
+    return False
 
-# Load model at startup
-load_model()
 
-def calculate_priority(booking):
-    """Calculates booking priority using the loaded K-means model."""
-    if loaded_model is None or loaded_preprocessor is None:
-        raise RuntimeError("K-means model not loaded. Please run seed_data.py first.")
+def calculate_priority(transaction) -> dict:
+    """
+    Calculates the priority of a booking based on a pre-trained K-means model.
+    """
+    global loaded_model, loaded_preprocessor, cluster_to_priority_map
 
-    # Extract features from booking object
-    today = datetime.utcnow()
-    diff_days = (booking.tanggal_acara - today).days
+    # Try to load the model if not already loaded
+    if loaded_model is None or loaded_preprocessor is None or not cluster_to_priority_map:
+        if not _load_model(): # Attempt to load from disk
+            # If loading fails or model file doesn't exist, train and save
+            train_and_save_model()
+            # After training, the global variables should be populated.
+            # If _load_model() was called and failed, then train_and_save_model() will populate them.
+            # If train_and_save_model() was called directly (e.g., from seed_data.py), they are already populated.
 
-    booking_features = {
-        'diff_days': diff_days,
-        'status': booking.status,
-        'price_locked': booking.price_locked,
-        'jumlah_client': booking.jumlah_client
+    # Prepare data for prediction
+    now = datetime.utcnow()
+    # Use transaction.tanggal_booking if available, otherwise use now.
+    # This is important for both historical data (seeding) and new transactions.
+    base_date_for_diff = transaction.tanggal_booking if transaction.tanggal_booking else now
+    diff_days = (transaction.tanggal_acara - base_date_for_diff).days
+
+    # Ensure diff_days is not negative
+    if diff_days < 0:
+        diff_days = 0
+
+    # The model was trained with 'pending', 'dp', 'paid'. Ensure consistency.
+    status = transaction.status if transaction.status in ['pending', 'dp', 'paid'] else 'pending'
+
+    data = {
+        'diff_days': [diff_days],
+        'status': [status],
+        'price_locked': [float(transaction.price_locked)], # Convert Decimal to float
+        'jumlah_client': [transaction.jumlah_client]
     }
+    df = pd.DataFrame(data)
 
-    # Convert to DataFrame for preprocessing
-    df = pd.DataFrame([booking_features]) # Assuming pandas is available or mock it
+    # Preprocess the new data
+    processed_data = loaded_preprocessor.transform(df)
 
-    # Preprocess features
-    processed_features = loaded_preprocessor.transform(df)
+    # Predict the cluster
+    cluster_id = loaded_model.predict(processed_data)[0]
 
-    # Predict cluster
-    cluster_id = loaded_model.predict(processed_features)[0]
-
-    # Map cluster ID to priority details
-    priority_details = cluster_to_priority_map.get(cluster_id, {
-        "priority_score": 0, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"
+    # Retrieve priority details from the map
+    return cluster_to_priority_map.get(cluster_id, {
+        "priority_score": 0,
+        "priority_segment": "low",
+        "urgency_level": "upcoming",
+        "monetary_level": "regular",
     })
 
-    return priority_details

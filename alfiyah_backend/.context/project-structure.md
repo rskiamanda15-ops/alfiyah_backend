@@ -33,6 +33,7 @@
         ├── segmentation.py
         ├── user_service.py
     └── utils/
+        └── broadcast.py
         └── priority.py
 
 ```
@@ -349,16 +350,38 @@ def update_current_user(
 
 ```py
 from typing import Optional
+import asyncio
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_admin, get_current_user
 from app.schemas.booking import BookingCreate, BookingRead, BookingStatusUpdate
 from app.services import booking_service
+from app.utils.broadcast import broadcaster
 
 router = APIRouter()
+
+
+@router.get("/stream")
+async def stream_bookings(_admin=Depends(get_current_admin)):
+    """Defines an SSE endpoint that streams booking updates to clients."""
+
+    async def event_generator():
+        queue = await broadcaster.subscribe()
+        try:
+            while True:
+                message = await queue.get()
+                # SSE format: data: <json_string>\n\n
+                yield f"data: {json.dumps(message)}\n\n"
+        except asyncio.CancelledError:
+            # This exception is raised when the client disconnects.
+            await broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/", response_model=BookingRead, status_code=status.HTTP_201_CREATED)
@@ -403,14 +426,42 @@ def update_booking_status_api(
 
 ```py
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse # New import
 from sqlalchemy.orm import Session
+import asyncio # New import
+import json # New import
 
 from app.core.database import get_db
 from app.core.security import get_current_admin
 from app.schemas.segment import SegmentItem
-from app.services.segmentation import segment_customers
+from app.services.segmentation import segment_customers, _broadcast_segments # Corrected import
 
 router = APIRouter()
+
+
+@router.get("/stream")
+async def stream_segments(db: Session = Depends(get_db), _admin=Depends(get_current_admin)):
+    """Defines an SSE endpoint that streams segment updates to clients."""
+
+    async def event_generator():
+        # Broadcast initial segments when a client connects
+        try:
+            _broadcast_segments(db) # Send current segments immediately
+        except Exception as e:
+            # Handle error if initial broadcast fails, but don't break the stream
+            print(f"Error broadcasting initial segments: {e}")
+
+        queue = await broadcaster.subscribe()
+        try:
+            while True:
+                message = await queue.get()
+                # Only send segment updates through this stream
+                if message.get("type") == "segment_updated":
+                    yield f"data: {json.dumps(message)}\n\n"
+        except asyncio.CancelledError:
+            await broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/", response_model=list[SegmentItem])
@@ -438,19 +489,19 @@ def list_segments(db: Session = Depends(get_db), _admin=Depends(get_current_admi
 
 ```py
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload # Add joinedload for eager loading
 
 from app.core.database import get_db
 from app.core.security import get_current_admin
 from app.models.service import Package, ServiceType
-from app.schemas.service import PackageCreate, PackageRead, ServiceTypeCreate
+from app.schemas.service import PackageCreate, PackageRead, ServiceTypeCreate, PackageUpdate, ServiceTypeUpdate # New imports
 
 router = APIRouter()
 
 
 @router.get("/packages", response_model=list[PackageRead])
 def list_packages(db: Session = Depends(get_db)):
-    return db.query(Package).all()
+    return db.query(Package).options(joinedload(Package.service_types)).all()
 
 
 @router.post("/packages", response_model=PackageRead, status_code=status.HTTP_201_CREATED)
@@ -466,7 +517,47 @@ def create_package(
     db.add(package)
     db.commit()
     db.refresh(package)
-    return package
+    # Ensure service_types is loaded for the response
+    package_read = db.query(Package).options(joinedload(Package.service_types)).filter(Package.id == package.id).first()
+    return package_read
+
+
+@router.patch("/packages/{package_id}", response_model=PackageRead)
+def update_package(
+    package_id: int,
+    payload: PackageUpdate,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin),
+):
+    package = db.query(Package).filter(Package.id == package_id).first()
+    if not package:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+
+    # Update fields from payload
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(package, field, value)
+
+    db.add(package)
+    db.commit()
+    db.refresh(package)
+    # Ensure service_types is loaded for the response
+    package_read = db.query(Package).options(joinedload(Package.service_types)).filter(Package.id == package.id).first()
+    return package_read
+
+
+@router.delete("/packages/{package_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_package(
+    package_id: int,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin),
+):
+    package = db.query(Package).filter(Package.id == package_id).first()
+    if not package:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+
+    db.delete(package)
+    db.commit()
+    return {"message": "Package deleted successfully"}
 
 
 @router.post("/types", response_model=PackageRead, status_code=status.HTTP_201_CREATED)
@@ -475,7 +566,7 @@ def create_service_type(
     db: Session = Depends(get_db),
     _admin=Depends(get_current_admin),
 ):
-    package = db.query(Package).filter(Package.id == payload.package_id).first()
+    package = db.query(Package).filter(Package.id == payload.package_id).options(joinedload(Package.service_types)).first()
     if not package:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
     service_type = ServiceType(
@@ -486,7 +577,59 @@ def create_service_type(
     )
     db.add(service_type)
     db.commit()
-    db.refresh(package)
+    db.refresh(service_type) # Refresh service_type to get its ID
+    db.refresh(package) # Refresh package to load the newly added service_type
+    # Ensure service_types is loaded for the response
+    package_read = db.query(Package).options(joinedload(Package.service_types)).filter(Package.id == package.id).first()
+    return package_read
+
+
+@router.patch("/types/{service_type_id}", response_model=PackageRead)
+def update_service_type(
+    service_type_id: int,
+    payload: ServiceTypeUpdate,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin),
+):
+    service_type = db.query(ServiceType).filter(ServiceType.id == service_type_id).first()
+    if not service_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service type not found")
+
+    # Update fields from payload
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(service_type, field, value)
+
+    db.add(service_type)
+    db.commit()
+    db.refresh(service_type) # Refresh service_type to get its updated values
+
+    # Fetch and return the parent package with updated service types
+    package = db.query(Package).options(joinedload(Package.service_types)).filter(Package.id == service_type.package_id).first()
+    if not package:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent package not found after service type update")
+    return package
+
+
+@router.delete("/types/{service_type_id}", response_model=PackageRead)
+def delete_service_type(
+    service_type_id: int,
+    db: Session = Depends(get_db),
+    _admin=Depends(get_current_admin),
+):
+    service_type = db.query(ServiceType).filter(ServiceType.id == service_type_id).first()
+    if not service_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service type not found")
+
+    package_id = service_type.package_id # Store package_id before deletion
+    db.delete(service_type)
+    db.commit()
+
+    # Fetch and return the parent package with updated service types
+    package = db.query(Package).options(joinedload(Package.service_types)).filter(Package.id == package_id).first()
+    if not package:
+        # This case implies the parent package was also deleted, which shouldn't happen
+        # if cascade is correctly configured, but handle defensively.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent package not found after service type deletion")
     return package
 
 ```
@@ -580,11 +723,22 @@ class PackageCreate(BaseModel):
     description: Optional[str] = None
 
 
+class PackageUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=120)
+    description: Optional[str] = None
+
+
 class ServiceTypeCreate(BaseModel):
     package_id: int
     name: str = Field(..., max_length=120)
     description: Optional[str] = None
     price: Decimal
+
+
+class ServiceTypeUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=120)
+    description: Optional[str] = None
+    price: Optional[Decimal] = None
 
 
 class ServiceTypeRead(BaseModel):
@@ -652,21 +806,21 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
+import anyio
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.service import ServiceType
 from app.models.transaction import Transaction
-from app.schemas.booking import BookingCreate, BookingStatusUpdate
+from app.schemas.booking import BookingCreate, BookingRead, BookingStatusUpdate
+from app.utils.broadcast import broadcaster
 from app.utils.priority import calculate_priority
+from app.services.segmentation import _broadcast_segments # Modified import
 
 
 def create_booking(db: Session, payload: BookingCreate, user_id: int):
     service_type = (
-        db.query(ServiceType)
-        .filter(ServiceType.id == payload.service_type_id)
-        .with_for_update()
-        .first()
+        db.query(ServiceType).filter(ServiceType.id == payload.service_type_id).with_for_update().first()
     )
     if not service_type:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service type not found")
@@ -691,7 +845,21 @@ def create_booking(db: Session, payload: BookingCreate, user_id: int):
     db.add(booking)
     db.commit()
     db.refresh(booking)
-    return booking
+
+    booking_with_user = (
+        db.query(Transaction).options(joinedload(Transaction.user)).filter(Transaction.id == booking.id).first()
+    )
+
+    if booking_with_user:
+        try:
+            booking_data = BookingRead.from_orm(booking_with_user).model_dump(mode="json")
+            anyio.from_thread.run(broadcaster.broadcast, {"type": "booking_created", "data": booking_data})
+        except Exception:
+            pass
+
+    _broadcast_segments(db) # Broadcast segments after booking creation
+
+    return booking_with_user
 
 
 def get_user_bookings(db: Session, user_id: int, order_by: Optional[str] = None, segment: Optional[str] = None):
@@ -713,14 +881,14 @@ def get_all_bookings(db: Session, order_by: Optional[str] = None, segment: Optio
 
 
 def update_booking_status(db: Session, booking_id: int, payload: BookingStatusUpdate):
-    booking = db.query(Transaction).filter(Transaction.id == booking_id).first()
+    booking = (
+        db.query(Transaction).options(joinedload(Transaction.user)).filter(Transaction.id == booking_id).first()
+    )
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    # Update status
     booking.status = payload.status
 
-    # Recalculate priority after status update
     result = calculate_priority(booking)
     booking.priority_score = result["priority_score"]
     booking.priority_segment = result["priority_segment"]
@@ -730,6 +898,15 @@ def update_booking_status(db: Session, booking_id: int, payload: BookingStatusUp
 
     db.commit()
     db.refresh(booking)
+
+    try:
+        booking_data = BookingRead.from_orm(booking).model_dump(mode="json")
+        anyio.from_thread.run(broadcaster.broadcast, {"type": "booking_updated", "data": booking_data})
+    except Exception:
+        pass
+
+    _broadcast_segments(db) # Broadcast segments after booking update
+
     return booking
 
 ```
@@ -744,11 +921,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Iterable
 
+import anyio # New import
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.schemas.segment import SegmentItem # New import
+from app.utils.broadcast import broadcaster # New import
 
 
 @dataclass(frozen=True)
@@ -910,6 +1090,28 @@ def segment_customers(db: Session, k: int) -> list[tuple[RfmPoint, int, str]]:
 
     return results_with_segments
 
+
+def _broadcast_segments(db: Session):
+    """Helper to recalculate and broadcast segments."""
+    try:
+        segments_raw = segment_customers(db, k=4)
+        segments_data = [
+            SegmentItem(
+                user_id=point.user_id,
+                name=point.name,
+                recency=point.recency,
+                frequency=point.frequency,
+                monetary=point.monetary,
+                cluster=label,
+                customer_segment=segment_label,
+            ).model_dump(mode="json")
+            for point, label, segment_label in segments_raw
+        ]
+        anyio.from_thread.run(broadcaster.broadcast, {"type": "segment_updated", "data": segments_data})
+    except Exception:
+        # Silently fail if broadcasting segments doesn't work.
+        pass
+
 ```
 ###  Path: `/app/services/user_service.py`
 
@@ -940,6 +1142,46 @@ def update_user(db: Session, current_user: User, user_update: UserUpdate) -> Use
     db.refresh(current_user)
     return current_user
 
+
+```
+###  Path: `/app/utils/broadcast.py`
+
+```py
+import asyncio
+from typing import Any, List
+
+
+class Broadcaster:
+    """Manages SSE client connections and broadcasts messages."""
+
+    def __init__(self):
+        self.queues: List[asyncio.Queue] = []
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self) -> asyncio.Queue:
+        """Subscribes a client by creating and returning a new queue."""
+        queue = asyncio.Queue()
+        async with self._lock:
+            self.queues.append(queue)
+        return queue
+
+    async def unsubscribe(self, queue: asyncio.Queue):
+        """Unsubscribes a client by removing their queue."""
+        async with self._lock:
+            if queue in self.queues:
+                self.queues.remove(queue)
+
+    async def broadcast(self, message: Any):
+        """Broadcasts a message to all subscribed clients."""
+        # The message is cloned for each queue to prevent one consumer
+        # from affecting others if the message object is mutable.
+        async with self._lock:
+            for queue in self.queues:
+                await queue.put(message)
+
+
+# Global singleton instance
+broadcaster = Broadcaster()
 
 ```
 ###  Path: `/app/utils/priority.py`
@@ -978,7 +1220,7 @@ def train_and_save_model():
     """Trains the K-means model and saves it along with the preprocessor."""
     print("Training K-means model for booking priority...")
     synthetic_data = _generate_synthetic_data()
-    df = pd.DataFrame(synthetic_data) # Assuming pandas is available or mock it
+    df = pd.DataFrame(synthetic_data)
 
     # Define preprocessing steps
     numeric_features = ['diff_days', 'price_locked', 'jumlah_client']
@@ -988,7 +1230,9 @@ def train_and_save_model():
         transformers=[
             ('num', StandardScaler(), numeric_features),
             ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-        ])
+        ],
+        remainder='passthrough' # Keep other columns if any, though not strictly needed here
+    )
 
     # Create a pipeline with preprocessor and KMeans
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
@@ -996,91 +1240,59 @@ def train_and_save_model():
 
     pipeline.fit(df)
 
-    # Determine mapping from cluster ID to priority segment
-    # This is a critical step: we need to analyze the clusters to assign meaning.
-    # For now, we'll create a dummy mapping based on centroids or some heuristic.
-    # In a real scenario, this would involve more rigorous analysis.
-    # We'll generate a dummy booking and predict its cluster to get a sense.
+    kmeans_model = pipeline.named_steps['kmeans']
+    preprocessor_model = pipeline.named_steps['preprocessor']
+    
+    # Get centroids in the transformed space
+    centroids_transformed = kmeans_model.cluster_centers_
 
-    # Example of how to determine mapping (simplified for this context)
-    # In reality, you'd inspect centroids and what kind of data they represent.
-    # For a deterministic outcome, we need a fixed way to map.
-    # Let's assume cluster 0 = low, 1 = medium, 2 = high
-    # This mapping must be manually derived or trained.
+    # Get the StandardScaler and OneHotEncoder components
+    scaler = preprocessor_model.named_transformers_['num']
+    onehot_encoder = preprocessor_model.named_transformers_['cat']
 
-    # Simulate a few data points to see cluster assignment
-    sample_bookings = [
-        {'diff_days': 30, 'status': 'pending', 'price_locked': 500000, 'jumlah_client': 1}, # Low
-        {'diff_days': 7, 'status': 'pending', 'price_locked': 900000, 'jumlah_client': 2},    # Medium
-        {'diff_days': 1, 'status': 'pending', 'price_locked': 1000000, 'jumlah_client': 3},   # High
-    ]
-    sample_df = pd.DataFrame(sample_bookings)
-    sample_clusters = pipeline.predict(sample_df)
+    # Determine the number of features created by the one-hot encoder
+    num_onehot_features = len(onehot_encoder.get_feature_names_out(categorical_features))
+    num_numeric_features = len(numeric_features)
 
-    # This mapping will need to be carefully constructed.
-    # For this example, let's assume a fixed mapping for simplicity based on expected cluster order.
-    # Realistically, you'd check which cluster centroid has highest avg score/monetary/etc.
+    # To score clusters, we'll evaluate their centroids
+    # Extract only the numeric parts of the centroids and inverse transform them
+    numeric_centroids_transformed = centroids_transformed[:, :num_numeric_features]
+    numeric_centroids_original = scaler.inverse_transform(numeric_centroids_transformed)
+
+    # Calculate a composite score for each cluster based on its original-scale numeric features
+    # Lower diff_days is better (higher urgency), higher price_locked and jumlah_client are better
+    cluster_scores = []
+    for i, centroid_numeric in enumerate(numeric_centroids_original):
+        diff_days, price_locked, jumlah_client = centroid_numeric
+        # Adjust weights as needed
+        score = (price_locked * 0.5) - (diff_days * 1000) + (jumlah_client * 50000) 
+        cluster_scores.append({'cluster_id': i, 'score': score})
+
+    # Sort clusters by their score in descending order
+    cluster_scores.sort(key=lambda x: x['score'], reverse=True)
+
+    # Assign priority segments based on sorted scores
     global cluster_to_priority_map
-    cluster_to_priority_map = {
-        sample_clusters[0]: {"priority_score": 20, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"},
-        sample_clusters[1]: {"priority_score": 60, "priority_segment": "medium", "urgency_level": "soon", "monetary_level": "premium"},
-        sample_clusters[2]: {"priority_score": 90, "priority_segment": "high", "urgency_level": "urgent", "monetary_level": "vip"},
-    }
-    # Ensure all 3 clusters are mapped, even if samples don't hit all.
-    # This part is highly dependent on the KMeans output and requires manual verification or more robust logic.
-    # For robustness, we could sort centroids by some aggregate metric (e.g., mean price_locked)
-    # and then assign segments.
+    cluster_to_priority_map = {}
+    
+    # Assuming n_clusters=3 for 'high', 'medium', 'low'
+    priority_labels = ['high', 'medium', 'low']
+    urgency_labels = ['urgent', 'soon', 'upcoming']
+    monetary_labels = ['vip', 'premium', 'regular']
+    priority_scores = [90, 60, 20]
 
-    # Save the pipeline and mapping
-    with open(MODEL_PATH, 'wb') as f:
-        pickle.dump({'pipeline': pipeline, 'mapping': cluster_to_priority_map}, f)
-    print("K-means model and preprocessor trained and saved.")
-
-def load_model():
-    """Loads the K-means model and preprocessor."""
-    global loaded_model, loaded_preprocessor, cluster_to_priority_map
-    if os.path.exists(MODEL_PATH):
-        with open(MODEL_PATH, 'rb') as f:
-            data = pickle.load(f)
-            loaded_model = data['pipeline'].named_steps['kmeans']
-            loaded_preprocessor = data['pipeline'].named_steps['preprocessor']
-            cluster_to_priority_map = data['mapping']
-        print("K-means model and preprocessor loaded.")
-    else:
-        print("K-means model not found. Please run seed_data.py to train it.")
-
-# Load model at startup
-load_model()
-
-def calculate_priority(booking):
-    """Calculates booking priority using the loaded K-means model."""
-    if loaded_model is None or loaded_preprocessor is None:
-        raise RuntimeError("K-means model not loaded. Please run seed_data.py first.")
-
-    # Extract features from booking object
-    today = datetime.utcnow()
-    diff_days = (booking.tanggal_acara - today).days
-
-    booking_features = {
-        'diff_days': diff_days,
-        'status': booking.status,
-        'price_locked': booking.price_locked,
-        'jumlah_client': booking.jumlah_client
-    }
-
-    # Convert to DataFrame for preprocessing
-    df = pd.DataFrame([booking_features]) # Assuming pandas is available or mock it
-
-    # Preprocess features
-    processed_features = loaded_preprocessor.transform(df)
-
-    # Predict cluster
-    cluster_id = loaded_model.predict(processed_features)[0]
-
-    # Map cluster ID to priority details
-    priority_details = cluster_to_priority_map.get(cluster_id, {
-        "priority_score": 0, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"
-    })
-
-    return priority_details
+    for i, cluster_info in enumerate(cluster_scores):
+        cluster_id = cluster_info['cluster_id']
+        if i < len(priority_labels):
+            cluster_to_priority_map[cluster_id] = {
+                "priority_score": priority_scores[i],
+                "priority_segment": priority_labels[i],
+                "urgency_level": urgency_labels[i],
+                "monetary_level": monetary_labels[i],
+            }
+        else:
+            # Fallback for more clusters than defined labels
+            cluster_to_priority_map[cluster_id] = {
+                "priority_score": 0, "priority_segment": "low", "urgency_level": "upcoming", "monetary_level": "regular"
+            }
 ```
